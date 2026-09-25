@@ -12,7 +12,9 @@ install_and_import("requests")
 
 import time
 import requests
-from datetime import datetime
+import os
+from http.server import HTTPServer, BaseHTTPRequestHandler
+import threading
 
 # --- بيانات بوت تليجرام الخاص بك ---
 TELEGRAM_BOT_TOKEN = "8698370133:AAH6yRXtsjTorCCx5iT0PYRjVuOj_Nng0x8"
@@ -25,6 +27,21 @@ CANDLES_URL = "https://www.okx.com/api/v5/market/candles?instId=BTC-USDT&bar=1D&
 ORDERBOOK_URL = "https://www.okx.com/api/v5/market/books?instId=BTC-USDT&sz=40"
 
 last_update_offset = 0
+
+# تشغيل خادم ويب خفيف للبقاء نشطاً على Railway
+class SimpleHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"OKX Bot is running successfully!")
+
+def run_server():
+    port = int(os.environ.get("PORT", 8080))
+    server = HTTPServer(('0.0.0.0', port), SimpleHandler)
+    server.serve_forever()
+
+# تشغيل السيرفر في الخلفية لترضى منصة Railway
+threading.Thread(target=run_server, daemon=True).start()
 
 def send_telegram_message(text):
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
@@ -131,7 +148,7 @@ def check_telegram_messages():
     except Exception as e:
         print(f"خطأ في قراءة رسائل تليجرام: {e}")
 
-print("تم بدء تشغيل بوت مراقبة وتفاعل OKX بنجاح وقيد الاستماع...")
+print("تم بدء تشغيل بوت مراقبة وتفاعل OKX بنجاح وثبات...")
 
 while True:
     try:

@@ -12,7 +12,7 @@ install_and_import("requests")
 
 import time
 import requests
-from datetime import datetime, timezone
+from datetime import datetime
 
 # --- بيانات بوت تليجرام الخاص بك ---
 TELEGRAM_BOT_TOKEN = "8698370133:AAH6yRXtsjTorCCx5iT0PYRjVuOj_Nng0x8"
@@ -24,13 +24,6 @@ TICKER_URL = "https://www.okx.com/api/v5/market/ticker?instId=BTC-USDT"
 CANDLES_URL = "https://www.okx.com/api/v5/market/candles?instId=BTC-USDT&bar=1D&limit=3"
 ORDERBOOK_URL = "https://www.okx.com/api/v5/market/books?instId=BTC-USDT&sz=40"
 
-current_day = None
-daily_open_price = 0.0
-yesterday_close_price = 0.0
-day_high = 0.0
-day_low = 0.0
-
-broken_walls = []
 last_update_offset = 0
 
 def send_telegram_message(text):
@@ -41,11 +34,9 @@ def send_telegram_message(text):
         "parse_mode": "Markdown"
     }
     try:
-        response = requests.post(url, json=payload, timeout=10)
-        return response.json()
+        requests.post(url, json=payload, timeout=10)
     except Exception as e:
         print(f"خطأ في إرسال تليجرام: {e}")
-        return None
 
 def fetch_market_data():
     try:
@@ -84,13 +75,13 @@ def fetch_orderbook_walls():
             price = float(price_s)
             size = float(size_s)
             if size >= wall_threshold:
-                walls.append({"type": "شراء (طلب)", "price": price, "size": size, "status": "قائم"})
+                walls.append({"type": "شراء (طلب)", "price": price, "size": size})
                 
         for price_s, size_s, _, _ in asks:
             price = float(price_s)
             size = float(size_s)
             if size >= wall_threshold:
-                walls.append({"type": "بيع (عرض)", "price": price, "size": size, "status": "قائم"})
+                walls.append({"type": "بيع (عرض)", "price": price, "size": size})
                 
         return walls
     except Exception as e:
@@ -115,14 +106,9 @@ def generate_market_report():
     report += f"🧱 *الحوائط الحالية في السوق ({len(walls)} حائط):*\n"
     if walls:
         for w in walls[:5]:
-            report += f"- {w['type']} عند السعر `{w['price']}` بحجم `{w['size']} BTC` (الحالة: {w['status']})\n"
+            report += f"- {w['type']} عند السعر `{w['price']}` بحجم `{w['size']} BTC`\n"
     else:
         report += "- لا توجد حوائط ضخمة مرصودة حالياً.\n"
-        
-    if broken_walls:
-        report += f"\n⚠️ *الحوائط التي كسرت اليوم:* {len(broken_walls)}\n"
-        for bw in broken_walls[-3:]:
-            report += f"- حائط {bw['type']} عند `{bw['price']}` كسر في وقت: `{bw['time']}`\n"
             
     return report
 
@@ -145,32 +131,12 @@ def check_telegram_messages():
     except Exception as e:
         print(f"خطأ في قراءة رسائل تليجرام: {e}")
 
-print("تم بدء تشغيل بوت مراقبة وتفاعل OKX بنجاح...")
+print("تم بدء تشغيل بوت مراقبة وتفاعل OKX بنجاح وقيد الاستماع...")
 
 while True:
     try:
         check_telegram_messages()
-        
-        market_data = fetch_market_data()
-        if market_data:
-            last_price, open_price, prev_close, high_24h, low_24h = market_data
-            today_date = datetime.now(timezone.utc).date()
-            
-            if current_day != today_date:
-                current_day = today_date
-                daily_open_price = open_price
-                yesterday_close_price = prev_close
-                day_high = high_24h
-                day_low = low_24h
-                send_telegram_message(f"🌅 *تقرير الافتتاح اليومي*\n- سعر الافتتاح: `{open_price}`\n- إغلاق أمس: `{prev_close}`")
-            else:
-                if high_24h > day_high:
-                    day_high = high_24h
-                if low_24h < day_low:
-                    day_low = low_24h
-
-        time.sleep(5)
-        
+        time.sleep(3)
     except Exception as e:
         print(f"حدث خطأ في الحلقة الرئيسية: {e}")
-        time.sleep(10)
+        time.sleep(5)

@@ -1,25 +1,23 @@
-import time
-import requests
 import os
-from http.server import HTTPServer, BaseHTTPRequestHandler
+import time
 import threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
+import requests
 
 TELEGRAM_BOT_TOKEN = "8698370133:AAH6yRXtsjTorCCx5iT0PYRjVuOj_Nng0x8"
 TELEGRAM_CHAT_ID = "8201127054"
 
 TICKER_URL = "https://www.okx.com/api/v5/market/ticker?instId=BTC-USDT"
 CANDLES_URL = "https://www.okx.com/api/v5/market/candles?instId=BTC-USDT&bar=1D&limit=3"
-ORDERBOOK_URL = "https://www.okx.com/api/v5/market/books?instId=BTC-USDT&sz=40"
 
 last_update_offset = 0
-last_alerted_price = 0  # لتجنب تكرار نفس التنبيه المزعج
 
-# 1. خادم الويب لإرضاء Railway ومنع توقف الحاوية
+# 1. تشغيل خادم الويب فوراً وبدون أي تأخير لإرضاء Railway
 class SimpleHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
-        self.wfile.write(b"Monitoring Bot is active!")
+        self.wfile.write(b"OKX Bot is active and healthy!")
     def log_message(self, format, *args):
         pass
 
@@ -28,6 +26,7 @@ def run_server():
     server = HTTPServer(('0.0.0.0', port), SimpleHandler)
     server.serve_forever()
 
+# بدء السيرفر في الخلفية قبل أي عملية أخرى
 threading.Thread(target=run_server, daemon=True).start()
 
 def send_message(text):
@@ -49,28 +48,22 @@ def get_report():
     except Exception as e:
         return f"⚠️ تعذر جلب البيانات حالياً: {e}"
 
-# 2. وظيفة المراقبة التلقائية (تتحدث وتُنبه تلقائياً)
+# 2. وظيفة المراقبة الخلفية
 def background_monitoring():
-    global last_alerted_price
     while True:
         try:
             ticker = requests.get(TICKER_URL, timeout=10).json()['data'][0]
             current_price = float(ticker['last'])
-            
-            # مثال للتنبيه التلقائي: إذا تحرك السعر بنسبة ملحوظة أو كلما أردت
-            # يمكنك تخصيص الشرط هنا (مثلاً رصد الحوائط الضخمة أو تغير السعر)
             print(f"تم فحص السوق بنجاح. السعر الحالي: {current_price}")
-            
         except Exception as e:
-            print(f"خطأ في فحص السوق الخلفي: {e}")
-            
-        time.sleep(60) # يفحص السوق كل 60 ثانية ويرسل تنبيه إذا لزم الأمر
+            print(f"خطأ في الفحص: {e}")
+        time.sleep(60)
 
 threading.Thread(target=background_monitoring, daemon=True).start()
 
-print("بوت المراقبة والتنبيه يعمل الآن بثبات تام...")
+print("البوت يعمل الآن بثبات تام...")
 
-# 3. حلقة الاستقبال للتفاعل مع رسائلك في تليجرام
+# 3. حلقة الاستقبال للتفاعل
 while True:
     try:
         url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getUpdates?offset={last_update_offset}&timeout=5"
@@ -84,7 +77,7 @@ while True:
                 chat_id = msg.get("chat", {}).get("id")
                 
                 if str(chat_id) == str(TELEGRAM_CHAT_ID):
-                    if "بيانات" in text or "سعر" in text or "تقرير" in text:
+                    if any(w in text for w in ["بيانات", "سعر", "تقرير", "السوق"]):
                         report = get_report()
                         send_message(report)
     except Exception as e:

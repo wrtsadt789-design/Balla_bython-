@@ -5,31 +5,34 @@ import threading
 from datetime import datetime, timezone
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
-# التوكن الجديد والمعرف الخاص بك
-TELEGRAM_BOT_TOKEN = "8614560573:AAEIkl9OGlHJ3zUXv1a5c8du7OKEH3v49Ic"
+# البيانات الخاصة بك
+TELEGRAM_BOT_TOKEN = "8614560573:AAEIkl90GlHJ3zUXv1a5c8du70KEH3v49Ic"
 TELEGRAM_CHAT_ID = "8201127054"
 
+# روابط OKX API
 TICKER_URL = "https://www.okx.com/api/v5/market/ticker?instId=BTC-USDT"
-CANDLES_URL = "https://www.okx.com/api/v5/market/candles?instId=BTC-USDT&bar=1D&limit=3"
+CANDLES_DAILY_URL = "https://www.okx.com/api/v5/market/candles?instId=BTC-USDT&bar=1D&limit=3"
+CANDLES_1H_URL = "https://www.okx.com/api/v5/market/candles?instId=BTC-USDT&bar=1H&limit=24"
 ORDERBOOK_URL = "https://www.okx.com/api/v5/market/books?instId=BTC-USDT&sz=40"
 TRADES_URL = "https://www.okx.com/api/v5/market/trades?instId=BTC-USDT&limit=100"
 
+# متغيرات التتبع
 last_report_date = None
-last_high = 0.0
-last_low = 0.0
+last_1h_high = 0.0
+last_1h_low = 0.0
 tracked_wall_bid = None
 tracked_wall_ask = None
 
-# شروط التنبيهات الذكية
+# شروط التنبيهات
 WALL_THRESHOLD_BTC = 5.0     # حائط أكبر من 5 بيتكوين
-LARGE_TRADE_BTC = 2.0        # صفقة ماركت أكبر من 2 بيتكوين
+LARGE_TRADE_BTC = 2.0        # صفقة أكبر من 2 بيتكوين
 
 # 1. خادم الويب للحفاظ على نشاط الحاوية في Railway
 class SimpleHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
-        self.wfile.write(b"OKX Smart Bot is Alive & Running!")
+        self.wfile.write(b"OKX Smart Bot (1H Frame) is Alive & Running!")
     def log_message(self, format, *args):
         pass
 
@@ -49,30 +52,46 @@ def send_telegram(text):
     except Exception as e:
         print(f"خطأ في الاتصال بتليجرام: {e}")
 
+def get_1h_high_low():
+    """جلب أعلى قمة وأدنى قاع من آخر 24 شمعة على فريم الساعة"""
+    try:
+        candles_1h = requests.get(CANDLES_1H_URL, timeout=10).json().get('data', [])
+        if not candles_1h:
+            return 0.0, 0.0
+        
+        # candle format: [ts, open, high, low, close, ...]
+        highs = [float(c[2]) for c in candles_1h]
+        lows = [float(c[3]) for c in candles_1h]
+        
+        return max(highs), min(lows)
+    except Exception as e:
+        print(f"خطأ في جلب بيانات فريم الساعة: {e}")
+        return 0.0, 0.0
+
 def check_daily_report():
-    global last_report_date, last_high, last_low
+    global last_report_date, last_1h_high, last_1h_low
     today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     
     if last_report_date != today_str:
         try:
             ticker = requests.get(TICKER_URL, timeout=10).json()['data'][0]
-            candles = requests.get(CANDLES_URL, timeout=10).json()['data']
+            daily_candles = requests.get(CANDLES_DAILY_URL, timeout=10).json()['data']
             
             last_price = float(ticker['last'])
-            open_today = float(candles[0][1]) if len(candles) >= 1 else last_price
-            close_yesterday = float(candles[1][4]) if len(candles) >= 2 else last_price
-            high_today = float(ticker['high24h'])
-            low_today = float(ticker['low24h'])
+            open_today = float(daily_candles[0][1]) if len(daily_candles) >= 1 else last_price
+            close_yesterday = float(daily_candles[1][4]) if len(daily_candles) >= 2 else last_price
             
-            last_high = high_today
-            last_low = low_today
+            # جلب قمة وقاع فريم الساعة
+            high_1h, low_1h = get_1h_high_low()
+            last_1h_high = high_1h
+            last_1h_low = low_1h
             
             msg = f"📌 [التقرير اليومي - {today_str}]\n"
             msg += f"-----------------------------------\n"
             msg += f"🌅 سعر بداية اليوم (الافتتاح): {open_today}\n"
             msg += f"📊 سعر إغلاق شمعة الأمس: {close_yesterday}\n"
-            msg += f"📈 قمة اليوم الحالية: {high_today}\n"
-            msg += f"📉 قاع اليوم الحالي: {low_today}\n"
+            msg += f"📈 أعلى قمة (فريم 1 ساعة): {high_1h}\n"
+            msg += f"📉 أدنى قاع (فريم 1 ساعة): {low_1h}\n"
             msg += f"💰 السعر الحالي: {last_price}"
             
             send_telegram(msg)
@@ -80,22 +99,20 @@ def check_daily_report():
         except Exception as e:
             print(f"خطأ في التقرير اليومي: {e}")
 
-def check_high_low_breakout():
-    global last_high, last_low
+def check_1h_high_low_breakout():
+    global last_1h_high, last_1h_low
     try:
-        ticker = requests.get(TICKER_URL, timeout=10).json()['data'][0]
-        current_high = float(ticker['high24h'])
-        current_low = float(ticker['low24h'])
+        current_high, current_low = get_1h_high_low()
         
-        if last_high > 0 and current_high > last_high:
-            send_telegram(f"🔥 تنبيه قمة جديدة لليوم!\nوصل السعر إلى: {current_high}")
-            last_high = current_high
+        if last_1h_high > 0 and current_high > last_1h_high:
+            send_telegram(f"🔥 تنبيه كسر قمة جديدة (فريم الساعة)!\nالقمة الجديدة: {current_high}")
+            last_1h_high = current_high
             
-        if last_low > 0 and current_low < last_low:
-            send_telegram(f"⚠️ تنبيه قاع جديد لليوم!\nهبط السعر إلى: {current_low}")
-            last_low = current_low
+        if last_1h_low > 0 and current_low < last_1h_low:
+            send_telegram(f"⚠️ تنبيه كسر قاع جديد (فريم الساعة)!\nالقاع الجديد: {current_low}")
+            last_1h_low = current_low
     except Exception as e:
-        print(f"خطأ في فحص القمم والقيعان: {e}")
+        print(f"خطأ في فحص اختراقات فريم الساعة: {e}")
 
 def check_liquidity_walls():
     global tracked_wall_bid, tracked_wall_ask
@@ -151,12 +168,12 @@ def check_large_trades_and_flow():
     except Exception as e:
         print(f"خطأ في الصفقات: {e}")
 
-print("... بدء تشغيل نظام المراقبة والتنبيهات الذكية ...")
+print("... بدء تشغيل نظام المراقبة والتنبيهات الذكية (فريم 1 ساعة) ...")
 
 while True:
     try:
         check_daily_report()
-        check_high_low_breakout()
+        check_1h_high_low_breakout()
         check_liquidity_walls()
         check_large_trades_and_flow()
     except Exception as e:

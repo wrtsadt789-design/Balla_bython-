@@ -5,8 +5,8 @@ import threading
 from datetime import datetime, timezone
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
-# تأكد من صحة التوكن و ID الخاص بك
-TELEGRAM_BOT_TOKEN = "8698370133:AAH6yRXtsjTorCCx5iT0PYRjVuOj_Nng0x8"
+# البيانات المحدثة والدقيقة
+TELEGRAM_BOT_TOKEN = "8698370133:AAH6yRXtsjTorCCx5iT0PYRjVuOj_NngOx8"
 TELEGRAM_CHAT_ID = "8201127054"
 
 TICKER_URL = "https://www.okx.com/api/v5/market/ticker?instId=BTC-USDT"
@@ -20,9 +20,11 @@ last_low = 0.0
 tracked_wall_bid = None
 tracked_wall_ask = None
 
-WALL_THRESHOLD_BTC = 5.0
-LARGE_TRADE_BTC = 2.0
+# شروط التنبيه (يمكنك تعديل الحدود كما تحب)
+WALL_THRESHOLD_BTC = 5.0     # حائط أكبر من 5 بيتكوين
+LARGE_TRADE_BTC = 2.0        # صفقة ماركت أكبر من 2 بيتكوين
 
+# 1. خادم الويب الخفي لإبقاء الحاوية نشطة في Railway
 class SimpleHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -102,7 +104,7 @@ def check_liquidity_walls():
         bids = books.get('bids', [])
         asks = books.get('asks', [])
         
-        # حماية التفكيك: أخذ السعر والكمية بغض النظر عن عدد العناصر المرتجعة
+        # أخذ السعر والكمية بأمان بغض النظر عن حجم القائمة
         current_bid_wall = None
         for item in bids:
             price, size = float(item[0]), float(item[1])
@@ -152,6 +154,7 @@ def check_large_trades_and_flow():
 
 print("... بدء تشغيل نظام المراقبة والتنبيهات الذكية ...")
 
+# الحلقة الرئيسية للمراقبة الصامتة
 while True:
     try:
         check_daily_report()

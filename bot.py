@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
 # التوكن الجديد والمعرف الخاص بك
-TELEGRAM_BOT_TOKEN = "8614560573:AAEIkl90GlHJ3zUXv1a5c8du70KEH3v49Ic"
+TELEGRAM_BOT_TOKEN = "8614560573:AAEIkl9OGlHJ3zUXv1a5c8du7OKEH3v49Ic"
 TELEGRAM_CHAT_ID = "8201127054"
 
 TICKER_URL = "https://www.okx.com/api/v5/market/ticker?instId=BTC-USDT"

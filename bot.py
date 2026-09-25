@@ -12,7 +12,7 @@ install_and_import("requests")
 
 import time
 import requests
-import datetime
+from datetime import datetime, timezone
 
 # --- بيانات بوت تليجرام الخاص بك ---
 TELEGRAM_BOT_TOKEN = "8698370133:AAH6yRXtsjTorCCx5iT0PYRjVuOj_Nng0x8"
@@ -24,21 +24,13 @@ TICKER_URL = "https://www.okx.com/api/v5/market/ticker?instId=BTC-USDT"
 CANDLES_URL = "https://www.okx.com/api/v5/market/candles?instId=BTC-USDT&bar=1D&limit=3"
 ORDERBOOK_URL = "https://www.okx.com/api/v5/market/books?instId=BTC-USDT&sz=40"
 
-# متغيرات تتبع الحالة اليومية
 current_day = None
 daily_open_price = 0.0
 yesterday_close_price = 0.0
 day_high = 0.0
 day_low = 0.0
 
-last_sent_high = 0.0
-last_sent_low = 0.0
-
-active_walls = []      # الحوائط الحالية
-broken_walls = []      # الحوائط التي كسرت ومتى كسرت
-new_walls_detected = [] # الحوائط الجديدة
-
-last_candle_time = None
+broken_walls = []
 last_update_offset = 0
 
 def send_telegram_message(text):
@@ -57,14 +49,12 @@ def send_telegram_message(text):
 
 def fetch_market_data():
     try:
-        # جلب السعر الحالي
         res = requests.get(TICKER_URL, timeout=10).json()
         ticker = res.get('data', [])[0]
         last_price = float(ticker['last'])
         high_24h = float(ticker['high24h'])
         low_24h = float(ticker['low24h'])
         
-        # جلب الشموع اليومية (لمعرفة الافتتاح والإغلاق السابق)
         c_res = requests.get(CANDLES_URL, timeout=10).json()
         candles = c_res.get('data', [])
         
@@ -72,9 +62,7 @@ def fetch_market_data():
         prev_close = last_price
         
         if len(candles) >= 2:
-            # شمعة اليوم الحالي
             open_price = float(candles[0][1])
-            # شمعة الأمس (إغلاق أمس)
             prev_close = float(candles[1][4])
         
         return last_price, open_price, prev_close, high_24h, low_24h
@@ -86,11 +74,10 @@ def fetch_orderbook_walls():
     try:
         res = requests.get(ORDERBOOK_URL, timeout=10).json()
         data = res.get('data', [])[0]
-        bids = data.get('bids', []) # الطلبات (شراء)
-        asks = data.get('asks', []) # العروض (بيع)
+        bids = data.get('bids', [])
+        asks = data.get('asks', [])
         
         walls = []
-        # عتبة اعتبار الطلب أو العرض "حائط" ضخم (مثلاً أكبر من 5 بيتكوين)
         wall_threshold = 5.0 
         
         for price_s, size_s, _, _ in bids:
@@ -127,7 +114,7 @@ def generate_market_report():
     
     report += f"🧱 *الحوائط الحالية في السوق ({len(walls)} حائط):*\n"
     if walls:
-        for w in walls[:5]: # عرض أول 5 حوائط رئيسية لمنع طول الرسالة
+        for w in walls[:5]:
             report += f"- {w['type']} عند السعر `{w['price']}` بحجم `{w['size']} BTC` (الحالة: {w['status']})\n"
     else:
         report += "- لا توجد حوائط ضخمة مرصودة حالياً.\n"
@@ -151,7 +138,6 @@ def check_telegram_messages():
                 text = message.get("text", "").strip()
                 chat_id = message.get("chat", {}).get("id")
                 
-                # التحقق إذا طلب المستخدم تقرير السوق
                 if text and any(word in text for word in ["بيانات", "السوق", "سعر", "قمة", "قاع", "الحوائط", "تحليل", "تقرير"]):
                     if str(chat_id) == str(TELEGRAM_CHAT_ID):
                         report = generate_market_report()
@@ -163,16 +149,12 @@ print("تم بدء تشغيل بوت مراقبة وتفاعل OKX بنجاح...
 
 while True:
     try:
-        now = datetime.datetime.utcnow()
-        today_date = now.date()
-        
-        # تفقد الرسائل الواردة من تليجرام بشكل مستمر وسريع
         check_telegram_messages()
         
-        # تحديث البيانات اليومية عند بداية يوم جديد
         market_data = fetch_market_data()
         if market_data:
             last_price, open_price, prev_close, high_24h, low_24h = market_data
+            today_date = datetime.now(timezone.utc).date()
             
             if current_day != today_date:
                 current_day = today_date
@@ -180,7 +162,6 @@ while True:
                 yesterday_close_price = prev_close
                 day_high = high_24h
                 day_low = low_24h
-                active_walls = fetch_orderbook_walls()
                 send_telegram_message(f"🌅 *تقرير الافتتاح اليومي*\n- سعر الافتتاح: `{open_price}`\n- إغلاق أمس: `{prev_close}`")
             else:
                 if high_24h > day_high:
@@ -188,7 +169,7 @@ while True:
                 if low_24h < day_low:
                     day_low = low_24h
 
-        time.sleep(5) # فترة راحة قصيرة لتجنب الضغط على الخوادم
+        time.sleep(5)
         
     except Exception as e:
         print(f"حدث خطأ في الحلقة الرئيسية: {e}")

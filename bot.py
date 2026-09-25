@@ -1,132 +1,163 @@
-import subprocess
-import sys
-
-def install_and_import(package):
-    try:
-        __import__(package)
-    except ImportError:
-        print(f"جاري تثبيت المكتبة ({package})...")
-        subprocess.check_call([sys.executable, "-m", "pip", "install", package])
-
-install_and_import("requests")
-
 import time
 import requests
-import datetime
+from datetime import datetime
 
-# --- بيانات بوت تيليجرام الخاص بك ---
-TELEGRAM_BOT_TOKEN = "8698370133:AAH6yRXtsjTorCCx5iT0PYRjVUoJ_NngOx8"
-TELEGRAM_CHAT_ID = "8201127054"
-# -----------------------------------
+# إعدادات تيليجرام (تأكد من وضع بياناتك هنا أو سحبها من البيئة Environment Variables)
+TELEGRAM_TOKEN = "YOUR_TELEGRAM_BOT_TOKEN"
+CHAT_ID = "YOUR_CHAT_ID"
 
-# روابط OKX
-TICKER_URL = "https://www.okx.com/api/v5/market/ticker?instId=BTC-USDT"
-CANDLES_URL = "https://www.okx.com/api/v5/market/candles?instId=BTC-USDT&bar=1D&limit=2" # فريم اليوم
-ORDERBOOK_URL = "https://www.okx.com/api/v5/market/books?instId=BTC-USDT&sz=50"
-TRADES_URL = "https://www.okx.com/api/v5/market/trades?instId=BTC-USDT&limit=50"
-
-WHALE_THRESHOLD_BTC = 1.0     # حجم صفقة الحوت
-WALL_VOLUME_THRESHOLD = 50.0  # حجم السيولة المعلقة للحائط (بالبتكوين)
-
-last_alerted_bid_wall = 0
-last_alerted_ask_wall = 0
 def send_telegram_message(message):
+    if not TELEGRAM_TOKEN or TELEGRAM_TOKEN == "YOUR_TELEGRAM_BOT_TOKEN":
+        print(f"[Telegram Mock]: {message}")
+        return
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    payload = {"chat_id": CHAT_ID, "text": message, "parse_mode": "Markdown"}
     try:
-        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-        payload = {
-            "chat_id": TELEGRAM_CHAT_ID,
-            "text": message,
-            "parse_mode": "Markdown"
-        }
-        response = requests.post(url, json=payload)
-        print("رد تيليجرام:", response.text) # <-- أضف هذا السطر لنرى الرد
-        if response.status_code != 200:
-            print("فشل إرسال رسالة تيليجرام")
+        requests.post(url, json=payload, timeout=10)
     except Exception as e:
-        print(f"خطأ في الاتصال بتيليجرام: {e}")
+        print(f"Error sending telegram message: {e}")
 
-def monitor_market():
-    global last_alerted_bid_wall, last_alerted_ask_wall
+def get_okx_market_data():
+    """
+    جلب بيانات البيتكوين الحالية من OKX (السعر، الفوليوم، أعلى/أدنى سعر)
+    """
     try:
-        # 1. جلب السعر الحالي
-        ticker_res = requests.get(TICKER_URL).json()
-        if ticker_res.get("code") == "0" and ticker_res.get("data"):
-            current_price = float(ticker_res["data"][0]["last"])
-        else:
-            return
+        url = "https://www.okx.com/api/v5/market/ticker?instId=BTC-USDT"
+        response = requests.get(url, timeout=10)
+        data = response.json()
+        if data["code"] == "0" and len(data["data"]) > 0:
+            ticker = data["data"][0]
+            return {
+                "last": float(ticker["last"]),
+                "vol24h": float(ticker["vol24h"]),
+                "high24h": float(ticker["high24h"]),
+                "low24h": float(ticker["low24h"])
+            }
+    except Exception as e:
+        print(f"Error fetching OKX data: {e}")
+    return None
 
-        # 2. جلب بيانات فريم اليوم (آخر قمة وآخر قاع يومي)
-        candles_res = requests.get(CANDLES_URL).json()
-        daily_high = "غير محدد"
-        daily_low = "غير محدد"
-        if candles_res.get("code") == "0" and candles_res.get("data"):
-            # شمعة اليوم السابقة أو الحالية [timestamp, open, high, low, close, ...]
-            day_data = candles_res["data"][0] 
-            daily_high = day_data[2]
-            daily_low = day_data[3]
-
-        # 3. فحص دفتر الأوامر والأموال المعلقة (الحوائط)
-        book_res = requests.get(ORDERBOOK_URL).json()
-        bid_wall_text = "لا يوجد حائط شراء ضخم حالياً"
-        ask_wall_text = "لا يوجد حائط بيع ضخم حالياً"
-        
-        if book_res.get("code") == "0" and book_res.get("data"):
-            bids = book_res["data"][0]["bids"]
-            asks = book_res["data"][0]["asks"]
+def get_okx_orderbook_walls():
+    """
+    محاكاة أو جلب الجدران والأموال المعلقة من دفتر الأوامر
+    """
+    try:
+        url = "https://www.okx.com/api/v5/market/books?instId=BTC-USDT&sz=20"
+        response = requests.get(url, timeout=10)
+        data = response.json()
+        if data["code"] == "0" and len(data["data"]) > 0:
+            basks = data["data"][0]["asks"] # عروض البيع (الجدران العلوية)
+            bids = data["data"][0]["bids"] # طلبات الشراء (الجدران السفلية)
             
-            strongest_bid = max(bids, key=lambda x: float(x[1])) if bids else [0, 0]
-            strongest_ask = max(asks, key=lambda x: float(x[1])) if asks else [0, 0]
-            
-            bid_price, bid_vol = float(strongest_bid[0]), float(strongest_bid[1])
-            ask_price, ask_vol = float(strongest_ask[0]), float(strongest_ask[1])
+            # البحث عن أكبر حجم أموال معلق (حائط)
+            max_bid_vol = 0
+            max_bid_price = 0
+            for item in bids:
+                price = float(item[0])
+                vol = float(item[1])
+                if vol > max_bid_vol:
+                    max_bid_vol = vol
+                    max_bid_price = price
+                    
+            return {"wall_price": max_bid_price, "wall_vol": max_bid_vol}
+    except Exception as e:
+        print(f"Error fetching orderbook: {e}")
+    return None
 
-            bid_wall_text = f"السعر: {bid_price} | الكمية المعلقة: {bid_vol} BTC"
-            ask_wall_text = f"السعر: {ask_price} | الكمية المعلقة: {ask_vol} BTC"
-
-            # تنبيهات فورية للحوائط الكبيرة أو كسرها
-            if bid_vol >= WALL_VOLUME_THRESHOLD and bid_price != last_alerted_bid_wall:
-                msg = f"🟢 *حائط شراء ضخم (دعم معلق)*\nالسعر: {bid_price}\nالكمية: {bid_vol} BTC"
-                send_telegram_message(msg)
-                last_alerted_bid_wall = bid_price
-
-            if ask_vol >= WALL_VOLUME_THRESHOLD and ask_price != last_alerted_ask_wall:
-                msg = f"🔴 *حائط بيع ضخم (مقاومة معلقة)*\nالسعر: {ask_price}\nالكمية: {ask_vol} BTC"
-                send_telegram_message(msg)
-                last_alerted_ask_wall = ask_price
-
-        # 4. رصد صفقات الحيتان (السيولة الكبيرة اللحظية)
-        trades_res = requests.get(TRADES_URL).json()
-        if trades_res.get("code") == "0" and trades_res.get("data"):
-            for trade in trades_res["data"]:
-                price = float(trade["px"])
-                amount = float(trade["sz"])
-                side = trade["side"].upper()
-                
-                if amount >= WHALE_THRESHOLD_BTC:
-                    whale_msg = f"🐋 *رصد صفقة حوت كبيرة!*\n• الاتجاه: {side}\n• الكمية: {amount} BTC\n• السعر: {price}"
-                    send_telegram_message(whale_msg)
-
-        # تجميع تقرير منظم بالبيانات المطلوبة وعرضه في الترمنال
-        report = (
-            f"📊 *تقرير مراقبة البيتكوين (OKX)*\n"
-            f"----------------------------------\n"
-            f"💰 السعر الحالي: `{current_price}`\n"
-            f"📈 قمة فريم اليوم: `{daily_high}`\n"
-            f"📉 قاع فريم اليوم: `{daily_low}`\n"
-            f"----------------------------------\n"
-            f"🧱 حائط الشراء (السيولة المعلقة):\n{bid_wall_text}\n"
-            f"🧱 حائط البيع (السيولة المعلقة):\n{ask_wall_text}\n"
-            f"----------------------------------\n"
-            f"🕒 الوقت: {datetime.datetime.now().strftime('%H:%M:%S')}"
+def main():
+    print("Bot started monitoring OKX Bitcoin market...")
+    
+    # متغيرات لتتبع الحالة وتجنب التكرار
+    last_day = datetime.now().day
+    last_sent_candle_time = 0
+    
+    previous_ath = 0
+    previous_atl = 99999999
+    last_wall_price = 0
+    
+    # رسالة بداية التشغيل اليومية
+    market_data = get_okx_market_data()
+    if market_data:
+        day_msg = (
+            f"🌅 *تقرير بداية اليوم للبيتكوين*\n"
+            f"━━━━━━━━━━━━━━━━━━━\n"
+            f"🔹 سعر الافتتاح / الحالي: `{market_data['last']}` $\n"
+            f"📈 أعلى قمة مسجلة: `{market_data['high24h']}` $\n"
+            f"📉 أدنى قاع مسجل: `{market_data['low24h']}` $\n"
         )
-        print(report)
+        send_telegram_message(day_msg)
+        previous_ath = market_data['high24h']
+        previous_atl = market_data['low24h']
 
-    except Exception as e:
-        print(f"خطأ أثناء جلب البيانات: {e}")
+    while True:
+        try:
+            current_time = time.time()
+            current_day = datetime.now().day
+            
+            # فحص تغيير اليوم لإرسال تقرير يومي جديد
+            if current_day != last_day:
+                last_day = current_day
+                market_data = get_okx_market_data()
+                if market_data:
+                    send_telegram_message(f"📅 *بداية يوم جديد*\nسعر الافتتاح: `{market_data['last']}` $")
+            
+            market_data = get_okx_market_data()
+            orderbook = get_okx_orderbook_walls()
+            
+            if market_data:
+                price = market_data['last']
+                high = market_data['high24h']
+                low = market_data['low24h']
+                vol = market_data['vol24h']
+                
+                # 1. التحقق من تسجيل قمة جديدة أو قاع جديد (بدون تكرار مزعج)
+                if high > previous_ath:
+                    previous_ath = high
+                    send_telegram_message(f"🚨 *تم تسجيل قمة جديدة!* 🚀\nالسعر وصل إلى: `{high}` $")
+                
+                if low < previous_atl and low > 0:
+                    previous_atl = low
+                    send_telegram_message(f"⚠️ *تم تسجيل قاع جديد!* 🔻\nالسعر انخفض إلى: `{low}` $")
+
+                # 2. إرسال تقرير كل نصف ساعة (إغلاق الشمعة الفرضية والفوليوم)
+                # (كل 1800 ثانية = 30 دقيقة)
+                if current_time - last_sent_candle_time >= 1800:
+                    last_sent_candle_time = current_time
+                    
+                    # حساب نسبة القرب من القمة والقاع
+                    range_span = high - low if high != low else 1
+                    distance_from_high_pct = ((high - price) / range_span) * 100
+                    
+                    candle_msg = (
+                        f"📊 *تحديث إغلاق نصف ساعة (شمعة البيتكوين)*\n"
+                        f"━━━━━━━━━━━━━━━━━━━\n"
+                        f"💵 سعر الإغلاق: `{price}` $\n"
+                        f"📦 الفوليوم (حجم التداول): `{vol:.2f}`\n"
+                        f"📏 القرب من القمة: يبعد بنسبة `{distance_from_high_pct:.2f}%`\n"
+                        f"📈 القمة الحالية: `{high}` $ | القاع الحالي: `{low}` $"
+                    )
+                    send_telegram_message(candle_msg)
+
+                # 3. مراقبة الجدران والأموال المعلقة وكسرها
+                if orderbook:
+                    wall_p = orderbook['wall_price']
+                    wall_v = orderbook['wall_vol']
+                    
+                    if last_wall_price == 0:
+                        last_wall_price = wall_p
+                        send_telegram_message(f"🧱 *تم رصد حائط (أموال معلقة جديد)*\nالسعر: `{wall_p}` $ | الحجم: `{wall_v}` BTC")
+                    
+                    # إذا تم كسر الحائط (تجاوز السعر الحالي سعر الحائط بشكل واضح)
+                    elif abs(price - last_wall_price) > 50 and price > last_wall_price:
+                        send_telegram_message(f"💥 *تم كسر الحائط بنجاح!* \nالسعر الحالي تجاوز الحائط عند سعر: `{price}` $ (كان الحائط عند `{last_wall_price}` $)")
+                        last_wall_price = wall_p # تحديث الحائط الجديد
+
+            # فحص السوق كل 60 ثانية
+            time.sleep(60)
+            
+        except Exception as e:
+            print(f"Main loop error: {e}")
+            time.sleep(30)
 
 if __name__ == "__main__":
-    print("بدء تشغيل بوت تيليجرام لمراقبة السوق...")
-    while True:
-        monitor_market()
-        time.sleep(30) # التحديث كل 30 ثانية
-    
+    main()

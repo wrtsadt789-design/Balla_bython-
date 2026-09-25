@@ -2,35 +2,32 @@ import os
 import time
 import requests
 import threading
-from datetime import datetime
+from datetime import datetime, timezone
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
+# تأكد من صحة التوكن و ID الخاص بك
 TELEGRAM_BOT_TOKEN = "8698370133:AAH6yRXtsjTorCCx5iT0PYRjVuOj_Nng0x8"
 TELEGRAM_CHAT_ID = "8201127054"
 
-# رابط API لمنصة OKX
 TICKER_URL = "https://www.okx.com/api/v5/market/ticker?instId=BTC-USDT"
 CANDLES_URL = "https://www.okx.com/api/v5/market/candles?instId=BTC-USDT&bar=1D&limit=3"
-ORDERBOOK_URL = "https://www.okx.com/api/v5/market/books?instId=BTC-USDT&sz=100"
+ORDERBOOK_URL = "https://www.okx.com/api/v5/market/books?instId=BTC-USDT&sz=40"
 TRADES_URL = "https://www.okx.com/api/v5/market/trades?instId=BTC-USDT&limit=100"
 
-# متغيرة لتتبع حالات التنبيهات المرة الواحدة
 last_report_date = None
 last_high = 0.0
 last_low = 0.0
 tracked_wall_bid = None
 tracked_wall_ask = None
 
-# الحد الأدنى للجم ليعتبر "حائط سيولة" أو "صفقة ضخمة" (يمكنك تعديل القيم)
-WALL_THRESHOLD_BTC = 5.0     # حائط أكبر من 5 بيتكوين
-LARGE_TRADE_BTC = 2.0        # صفقة منفذة أكبر من 2 بيتكوين
+WALL_THRESHOLD_BTC = 5.0
+LARGE_TRADE_BTC = 2.0
 
-# 1. خادم الويب لإبقاء الحاوية نشطة في Railway
 class SimpleHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
-        self.wfile.write(b"OKX Smart Alert Bot is Active!")
+        self.wfile.write(b"OKX Smart Bot is Running Perfectly!")
     def log_message(self, format, *args):
         pass
 
@@ -50,14 +47,9 @@ def send_telegram(text):
     except Exception as e:
         print(f"خطأ إرسال: {e}")
 
-# --------------------------------------------------
-# وظائف التنبيه الذكية
-# --------------------------------------------------
-
 def check_daily_report():
-    """ترسل تقرير اليوم مرة واحدة فقط عند بداية كل يوم جديد"""
     global last_report_date, last_high, last_low
-    today_str = datetime.utcnow().strftime("%Y-%m-%d")
+    today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     
     if last_report_date != today_str:
         try:
@@ -87,98 +79,86 @@ def check_daily_report():
             print(f"خطأ في التقرير اليومي: {e}")
 
 def check_high_low_breakout():
-    """تنبيه عند كسر قمة أو قاع اليوم مرة واحدة"""
     global last_high, last_low
     try:
         ticker = requests.get(TICKER_URL, timeout=10).json()['data'][0]
         current_high = float(ticker['high24h'])
         current_low = float(ticker['low24h'])
-        current_price = float(ticker['last'])
         
         if last_high > 0 and current_high > last_high:
-            send_telegram(f"🔥 *تنبيه قمة جديدة لليوم!*\nالسعر اختلع القمة السابقة ووصل إلى: {current_high}")
+            send_telegram(f"🔥 تنبيه قمة جديدة لليوم!\nوصل السعر إلى: {current_high}")
             last_high = current_high
             
         if last_low > 0 and current_low < last_low:
-            send_telegram(f"⚠️ *تنبيه قاع جديد لليوم!*\nالسعر هبط وكسر القاع السابق إلى: {current_low}")
+            send_telegram(f"⚠️ تنبيه قاع جديد لليوم!\nهبط السعر إلى: {current_low}")
             last_low = current_low
     except Exception as e:
         print(f"خطأ في فحص القمم والقيعان: {e}")
 
 def check_liquidity_walls():
-    """رصد الحوائط الجديدة وتنبيه كسر/حذف الحوائط"""
     global tracked_wall_bid, tracked_wall_ask
     try:
         books = requests.get(ORDERBOOK_URL, timeout=10).json()['data'][0]
         bids = books.get('bids', [])
         asks = books.get('asks', [])
         
-        # البحث عن حائط شراء جديد
+        # حماية التفكيك: أخذ السعر والكمية بغض النظر عن عدد العناصر المرتجعة
         current_bid_wall = None
-        for price, size, _ in bids:
-            if float(size) >= WALL_THRESHOLD_BTC:
-                current_bid_wall = (float(price), float(size))
+        for item in bids:
+            price, size = float(item[0]), float(item[1])
+            if size >= WALL_THRESHOLD_BTC:
+                current_bid_wall = (price, size)
                 break
                 
-        # البحث عن حائط بيع جديد
         current_ask_wall = None
-        for price, size, _ in asks:
-            if float(size) >= WALL_THRESHOLD_BTC:
-                current_ask_wall = (float(price), float(size))
+        for item in asks:
+            price, size = float(item[0]), float(item[1])
+            if size >= WALL_THRESHOLD_BTC:
+                current_ask_wall = (price, size)
                 break
 
-        # تنبيه حائط شراء
         if current_bid_wall and current_bid_wall != tracked_wall_bid:
-            send_telegram(f"🧱 *تنبيه حائط شراء جديد!*\nالسعر: {current_bid_wall[0]} | الكمية: {current_bid_wall[1]} BTC")
+            send_telegram(f"🧱 تنبيه حائط شراء جديد!\nالسعر: {current_bid_wall[0]} | الكمية: {current_bid_wall[1]} BTC")
             tracked_wall_bid = current_bid_wall
         elif not current_bid_wall and tracked_wall_bid:
-            send_telegram(f"💥 *تم كسر/تنفيذ حائط الشراء* عند السعر: {tracked_wall_bid[0]}")
+            send_telegram(f"💥 تم كسر/إلغاء حائط الشراء عند السعر: {tracked_wall_bid[0]}")
             tracked_wall_bid = None
 
-        # تنبيه حائط بيع
         if current_ask_wall and current_ask_wall != tracked_wall_ask:
-            send_telegram(f"🧱 *تنبيه حائط بيع جديد!*\nالسعر: {current_ask_wall[0]} | الكمية: {current_ask_wall[1]} BTC")
+            send_telegram(f"🧱 تنبيه حائط بيع جديد!\nالسعر: {current_ask_wall[0]} | الكمية: {current_ask_wall[1]} BTC")
             tracked_wall_ask = current_ask_wall
         elif not current_ask_wall and tracked_wall_ask:
-            send_telegram(f"💥 *تم كسر/تنفيذ حائط البيع* عند السعر: {tracked_wall_ask[0]}")
+            send_telegram(f"💥 تم كسر/إلغاء حائط البيع عند السعر: {tracked_wall_ask[0]}")
             tracked_wall_ask = None
             
     except Exception as e:
         print(f"خطأ في رصد الحوائط: {e}")
 
 def check_large_trades_and_flow():
-    """رصد الصفقات الكبيرة وحساب السيولة الداخلة والخارجة"""
     try:
         trades = requests.get(TRADES_URL, timeout=10).json()['data']
-        inflow = 0.0   # سيولة داخلة (شراء)
-        outflow = 0.0  # سيولة خارجة (بيع)
-        
         for trade in trades:
             size = float(trade['sz'])
             side = trade['side']
             price = float(trade['px'])
             
-            if side == 'buy':
-                inflow += size * price
-                if size >= LARGE_TRADE_BTC:
-                    send_telegram(f"🐳 *صفقة شراء ضخمة (ماركت)!*\nالحجم: {size} BTC | السعر: {price}")
-            elif side == 'sell':
-                outflow += size * price
-                if size >= LARGE_TRADE_BTC:
-                    send_telegram(f"🚨 *صفقة بيع ضخمة (ماركت)!*\nالحجم: {size} BTC | السعر: {price}")
+            if side == 'buy' and size >= LARGE_TRADE_BTC:
+                send_telegram(f"🐳 صفقة شراء ضخمة (ماركت)!\nالحجم: {size} BTC | السعر: {price}")
+            elif side == 'sell' and size >= LARGE_TRADE_BTC:
+                send_telegram(f"🚨 صفقة بيع ضخمة (ماركت)!\nالحجم: {size} BTC | السعر: {price}")
                     
     except Exception as e:
-        print(f"خطأ في السيولة والصفقات: {e}")
+        print(f"خطأ في الصفقات: {e}")
 
-# --------------------------------------------------
-# الحلقة الرئيسية للمراقبة
-# --------------------------------------------------
 print("... بدء تشغيل نظام المراقبة والتنبيهات الذكية ...")
 
 while True:
-    check_daily_report()          # يفحص ويرسل التقرير اليومي مرة واحدة
-    check_high_low_breakout()     # يفحص كسر القمم/القيعان
-    check_liquidity_walls()       # يفحص الحوائط وتغيراتها
-    check_large_trades_and_flow() # يفحص الصفقات الضخمة والسيولة
-    
-    time.sleep(15)  # يفحص السوق كل 15 ثانية صامتاً ولا يرسل إلا عند وجود تنبيه جديد
+    try:
+        check_daily_report()
+        check_high_low_breakout()
+        check_liquidity_walls()
+        check_large_trades_and_flow()
+    except Exception as e:
+        print(f"خطأ رئيسي في حلقة التكرار: {e}")
+        
+    time.sleep(15)

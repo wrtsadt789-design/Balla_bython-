@@ -28,19 +28,21 @@ ORDERBOOK_URL = "https://www.okx.com/api/v5/market/books?instId=BTC-USDT&sz=40"
 
 last_update_offset = 0
 
-# تشغيل خادم ويب خفيف للبقاء نشطاً على Railway
+# خادم ويب خفيف لإرضاء منصة Railway والبقاء نشطاً
 class SimpleHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
         self.wfile.write(b"OKX Bot is running successfully!")
+    def log_message(self, format, *args):
+        pass
 
 def run_server():
     port = int(os.environ.get("PORT", 8080))
     server = HTTPServer(('0.0.0.0', port), SimpleHandler)
     server.serve_forever()
 
-# تشغيل السيرفر في الخلفية لترضى منصة Railway
+# تشغيل السيرفر في الخلفية
 threading.Thread(target=run_server, daemon=True).start()
 
 def send_telegram_message(text):
@@ -148,7 +150,7 @@ def check_telegram_messages():
     except Exception as e:
         print(f"خطأ في قراءة رسائل تليجرام: {e}")
 
-print("تم بدء تشغيل بوت مراقبة وتفاعل OKX بنجاح وثبات...")
+print("تم بدء تشغيل بوت مراقبة وتفاعل OKX بنجاح وثبات تام...")
 
 while True:
     try:
